@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "해피트리 진도관리 - ClassCard 연동",
+  "version": "1.7",
+  "description": "ClassCard 평가 데이터를 해피트리 진도사이트로 직접 가져옵니다",
+  "permissions": ["storage", "tabs", "scripting", "activeTab"],
+  "host_permissions": [
+    "https://www.classcard.net/*",
+    "https://kyuhwajeong.github.io/*",
+    "https://happytree.vercel.app/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.classcard.net/*"],
+      "js": ["classcard-alert.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.classcard.net/*"],
+      "js": ["classcard-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://kyuhwajeong.github.io/*",
+        "https://happytree.vercel.app/*"
+      ],
+      "js": ["site-content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": { "128": "icons/icon128.png" }
+  },
+  "icons": { "128": "icons/icon128.png" }
+}

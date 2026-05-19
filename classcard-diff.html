@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClassCard xlsx 비교 분석</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f4f0;
+    --surface: #ffffff;
+    --surface2: #f8f7f4;
+    --border: #e2e0d8;
+    --border2: #ccc9be;
+    --text: #1a1916;
+    --text2: #6b6860;
+    --text3: #9b9890;
+    --accent: #1d5e8a;
+    --accent-light: #e8f2f9;
+    --diff: #d85a30;
+    --diff-light: #faece7;
+    --ok: #0f6e56;
+    --ok-light: #e1f5ee;
+    --warn: #ba7517;
+    --warn-light: #faeeda;
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+
+  body {
+    font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 52px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo-mark {
+    width: 28px; height: 28px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 13px; font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+
+  header h1 { font-size: 14px; font-weight: 600; color: var(--text); }
+  header span { font-size: 12px; color: var(--text3); margin-left: 4px; }
+
+  .main { max-width: 1280px; margin: 0 auto; padding: 24px; }
+
+  .upload-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .drop-zone {
+    background: var(--surface);
+    border: 1.5px dashed var(--border2);
+    border-radius: var(--radius-lg);
+    padding: 28px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    position: relative;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-light);
+  }
+  .drop-zone.loaded {
+    border-style: solid;
+    border-color: var(--ok);
+    background: var(--ok-light);
+  }
+  .drop-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+
+  .drop-icon {
+    font-size: 28px; margin-bottom: 8px;
+  }
+  .drop-label {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .drop-label.b { color: var(--diff); }
+  .drop-hint { font-size: 12px; color: var(--text3); }
+  .drop-filename {
+    font-size: 13px; font-weight: 500; color: var(--ok);
+    margin-top: 6px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .controls-row {
+    display: flex; gap: 10px; align-items: center;
+    margin-bottom: 16px; flex-wrap: wrap;
+  }
+
+  .btn {
+    height: 34px; padding: 0 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border2);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 13px; font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:hover { background: var(--surface2); }
+  .btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+  .btn.primary:hover { background: #17517a; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+
+  .filter-tabs {
+    display: flex; gap: 4px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 3px;
+  }
+  .filter-tab {
+    padding: 4px 12px;
+    border-radius: 5px;
+    font-size: 12px; font-weight: 500;
+    cursor: pointer;
+    color: var(--text2);
+    transition: all 0.1s;
+    border: none; background: none;
+  }
+  .filter-tab.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+  }
+  .stat-label { font-size: 11px; color: var(--text3); font-weight: 500; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .stat-value { font-size: 22px; font-weight: 700; color: var(--text); }
+  .stat-card.diff .stat-value { color: var(--diff); }
+  .stat-card.ok .stat-value { color: var(--ok); }
+  .stat-card.warn .stat-value { color: var(--warn); }
+
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+
+  .table-scroll { overflow-x: auto; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    font-size: 12.5px;
+    table-layout: fixed;
+  }
+
+  thead tr {
+    background: var(--surface2);
+    border-bottom: 1.5px solid var(--border);
+  }
+
+  th {
+    padding: 9px 10px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface2); }
+
+  .col-unit { width: 190px; }
+  .col-student { width: 90px; }
+  .col-status { width: 64px; }
+  .col-data { width: 52px; text-align: center; }
+  .col-game { width: 90px; }
+
+  .row-diff td { background: #fffaf8; }
+  .row-diff:hover td { background: #fff5f0; }
+  .row-only-a td { background: #fef9e8; }
+  .row-only-a:hover td { background: #fef4d6; }
+  .row-only-b td { background: #f0f6ff; }
+  .row-only-b:hover td { background: #e4f0ff; }
+
+  .cell-changed {
+    background: var(--diff-light) !important;
+    color: var(--diff);
+    font-weight: 600;
+    border-radius: 3px;
+  }
+
+  .badge {
+    display: inline-flex; align-items: center;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-size: 10px; font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .badge-match { background: var(--ok-light); color: var(--ok); }
+  .badge-diff { background: var(--diff-light); color: var(--diff); }
+  .badge-only-a { background: var(--warn-light); color: var(--warn); }
+  .badge-only-b { background: var(--accent-light); color: var(--accent); }
+  .badge-ok { background: var(--ok-light); color: var(--ok); }
+  .badge-incomplete { background: #f1efe8; color: #5f5e5a; }
+
+  .empty-state {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text3);
+  }
+  .empty-icon { font-size: 36px; margin-bottom: 10px; }
+  .empty-title { font-size: 15px; font-weight: 600; color: var(--text2); margin-bottom: 6px; }
+
+  .diff-detail {
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 2px;
+  }
+
+  .cell-pair {
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .cell-a { color: var(--diff); font-size: 11px; }
+  .cell-b { color: var(--ok); font-size: 11px; }
+  .cell-same { color: var(--text); }
+
+  .section-group { font-weight: 600; color: var(--text2); background: var(--surface2) !important; }
+  .section-group td { border-bottom: 1px solid var(--border2) !important; }
+
+  .col-ab { width: 70px; }
+  .divider-row td {
+    background: var(--surface2) !important;
+    padding: 4px 10px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text3);
+    border-top: 1px solid var(--border2);
+  }
+
+  .export-btn { margin-left: auto; }
+
+  @media (max-width: 768px) {
+    .upload-section { grid-template-columns: 1fr; }
+    .stats-row { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">CC</div>
+  <h1>ClassCard xlsx 비교 분석</h1>
+  <span>학습 데이터 차이 검출 도구</span>
+</header>
+
+<div class="main">
+
+  <div class="upload-section">
+    <div class="drop-zone" id="zoneA">
+      <input type="file" accept=".xlsx,.xls" onchange="loadFile(event, 'A')">
+      <div class="drop-icon">📄</div>
+      <div class="drop-label">파일 A</div>
+      <div class="drop-hint">기준 파일 (내가 갖고 있는 xlsx)</div>
+      <div class="drop-filename" id="nameA">드래그하거나 클릭해서 선택</div>
+    </div>
+    <div class="drop-zone" id="zoneB">
+      <input type="file" accept=".xlsx,.xls" onchange="loadFile(event, 'B')">
+      <div class="drop-icon">📥</div>
+      <div class="drop-label b">파일 B</div>
+      <div class="drop-hint">비교 파일 (ClassCard에서 추출한 xlsx)</div>
+      <div class="drop-filename" id="nameB">드래그하거나 클릭해서 선택</div>
+    </div>
+  </div>
+
+  <div class="controls-row">
+    <div class="filter-tabs" id="filterTabs">
+      <button class="filter-tab active" onclick="setFilter('all')">전체 <span id="cnt-all">0</span></button>
+      <button class="filter-tab" onclick="setFilter('diff')">차이있음 <span id="cnt-diff">0</span></button>
+      <button class="filter-tab" onclick="setFilter('match')">일치 <span id="cnt-match">0</span></button>
+      <button class="filter-tab" onclick="setFilter('only-a')">A만 <span id="cnt-a">0</span></button>
+      <button class="filter-tab" onclick="setFilter('only-b')">B만 <span id="cnt-b">0</span></button>
+    </div>
+
+    <select id="unitFilter" style="height:34px; padding:0 10px; border-radius:8px; border:1px solid var(--border2); font-size:13px; background:var(--surface); color:var(--text);" onchange="render()">
+      <option value="">모든 세트</option>
+    </select>
+
+    <select id="studentFilter" style="height:34px; padding:0 10px; border-radius:8px; border:1px solid var(--border2); font-size:13px; background:var(--surface); color:var(--text);" onchange="render()">
+      <option value="">모든 학생</option>
+    </select>
+
+    <button class="btn export-btn" onclick="exportResult()" id="exportBtn" disabled>⬇ 결과 xlsx 저장</button>
+  </div>
+
+  <div class="stats-row" id="statsRow" style="display:none">
+    <div class="stat-card">
+      <div class="stat-label">전체 행 (A)</div>
+      <div class="stat-value" id="s-total">—</div>
+    </div>
+    <div class="stat-card ok">
+      <div class="stat-label">완전 일치</div>
+      <div class="stat-value" id="s-match">—</div>
+    </div>
+    <div class="stat-card diff">
+      <div class="stat-label">값 차이</div>
+      <div class="stat-value" id="s-diff">—</div>
+    </div>
+    <div class="stat-card warn">
+      <div class="stat-label">A만 존재</div>
+      <div class="stat-value" id="s-onlya">—</div>
+    </div>
+    <div class="stat-card" style="border-color:var(--accent);">
+      <div class="stat-label" style="color:var(--accent)">B만 존재</div>
+      <div class="stat-value" style="color:var(--accent)" id="s-onlyb">—</div>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table id="resultTable">
+        <thead>
+          <tr>
+            <th class="col-status">상태</th>
+            <th class="col-unit">세트 제목</th>
+            <th class="col-student">학생명</th>
+            <th class="col-data">암기</th>
+            <th class="col-data">리콜</th>
+            <th class="col-data">스펠</th>
+            <th class="col-data">스피킹</th>
+            <th class="col-game">게임</th>
+            <th class="col-data">테스트</th>
+            <th class="col-data">완료</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr>
+            <td colspan="10">
+              <div class="empty-state">
+                <div class="empty-icon">📊</div>
+                <div class="empty-title">두 파일을 업로드하면 비교 결과가 표시됩니다</div>
+                <div class="diff-detail">기준 파일(A)과 ClassCard 추출 파일(B)을 각각 선택해 주세요</div>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const CMP_COLS = ['암기','리콜','스펠','스피킹','게임','테스트','완료여부'];
+const DISP_COLS = ['암기','리콜','스펠','스피킹','게임','테스트','완료여부'];
+let dataA = [], dataB = [], merged = [];
+let currentFilter = 'all';
+
+function parseXlsx(ab) {
+  const wb = XLSX.read(ab, { type: 'array' });
+  // ★ '평가표' 시트 우선, 없으면 첫 번째 시트
+  const sname = wb.SheetNames.includes('평가표') ? '평가표' : wb.SheetNames[0];
+  const ws = wb.Sheets[sname];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  return rows.map(r => ({
+    unit: String(r['세트 제목'] || '').trim(),
+    type: String(r['타입'] || '').trim(),
+    student: String(r['학생명'] || '').trim(),
+    암기: String(r['암기'] ?? '').trim(),
+    리콜: String(r['리콜'] ?? '').trim(),
+    스펠: String(r['스펠'] ?? '').trim(),
+    스피킹: String(r['스피킹'] ?? '').trim(),
+    게임: String(r['게임'] ?? '').trim(),
+    테스트: String(r['테스트'] ?? '').trim(),
+    완료여부: String(r['완료여부'] ?? '').trim(),
+  })).filter(r => r.unit);
+}
+
+function makeKey(r) { return r.unit + '|' + r.student; }
+
+function buildMerged() {
+  const mapA = new Map();
+  const mapB = new Map();
+  dataA.forEach(r => mapA.set(makeKey(r), r));
+  dataB.forEach(r => mapB.set(makeKey(r), r));
+
+  const allKeys = new Set([...mapA.keys(), ...mapB.keys()]);
+  const result = [];
+
+  allKeys.forEach(k => {
+    const a = mapA.get(k);
+    const b = mapB.get(k);
+    if (a && b) {
+      const diffs = CMP_COLS.filter(c => a[c] !== b[c]);
+      result.push({ key: k, a, b, status: diffs.length ? 'diff' : 'match', diffs });
+    } else if (a) {
+      result.push({ key: k, a, b: null, status: 'only-a', diffs: [] });
+    } else {
+      result.push({ key: k, a: null, b, status: 'only-b', diffs: [] });
+    }
+  });
+
+  result.sort((x, y) => {
+    const ua = (x.a || x.b).unit;
+    const ub = (y.a || y.b).unit;
+    const sa = (x.a || x.b).student;
+    const sb = (y.a || y.b).student;
+    return ua.localeCompare(ub, 'ko') || sa.localeCompare(sb, 'ko');
+  });
+
+  return result;
+}
+
+function loadFile(e, which) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const data = parseXlsx(new Uint8Array(ev.target.result));
+    const wb2 = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' });
+    const sheetUsed = wb2.SheetNames.includes('평가표') ? '평가표' : wb2.SheetNames[0];
+    const sheetWarn = sheetUsed !== '평가표' ? ` ⚠️ 시트: ${sheetUsed}` : '';
+    if (which === 'A') {
+      dataA = data;
+      document.getElementById('nameA').textContent = file.name + sheetWarn;
+      document.getElementById('zoneA').classList.add('loaded');
+    } else {
+      dataB = data;
+      document.getElementById('nameB').textContent = file.name + sheetWarn;
+      document.getElementById('zoneB').classList.add('loaded');
+    }
+    if (dataA.length && dataB.length) analyze();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function analyze() {
+  merged = buildMerged();
+
+  const cntAll = merged.length;
+  const cntDiff = merged.filter(r => r.status === 'diff').length;
+  const cntMatch = merged.filter(r => r.status === 'match').length;
+  const cntA = merged.filter(r => r.status === 'only-a').length;
+  const cntB = merged.filter(r => r.status === 'only-b').length;
+
+  document.getElementById('cnt-all').textContent = cntAll;
+  document.getElementById('cnt-diff').textContent = cntDiff;
+  document.getElementById('cnt-match').textContent = cntMatch;
+  document.getElementById('cnt-a').textContent = cntA;
+  document.getElementById('cnt-b').textContent = cntB;
+
+  document.getElementById('s-total').textContent = dataA.length;
+  document.getElementById('s-match').textContent = cntMatch;
+  document.getElementById('s-diff').textContent = cntDiff;
+  document.getElementById('s-onlya').textContent = cntA;
+  document.getElementById('s-onlyb').textContent = cntB;
+  document.getElementById('statsRow').style.display = 'grid';
+  document.getElementById('exportBtn').disabled = false;
+
+  const units = [...new Set(merged.map(r => (r.a || r.b).unit))];
+  const uSel = document.getElementById('unitFilter');
+  uSel.innerHTML = '<option value="">모든 세트</option>' + units.map(u => `<option value="${esc(u)}">${u}</option>`).join('');
+
+  const students = [...new Set(merged.map(r => (r.a || r.b).student))];
+  const sSel = document.getElementById('studentFilter');
+  sSel.innerHTML = '<option value="">모든 학생</option>' + students.map(s => `<option value="${esc(s)}">${s}</option>`).join('');
+
+  render();
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-tab').forEach((tab, i) => {
+    tab.classList.toggle('active', ['all','diff','match','only-a','only-b'][i] === f);
+  });
+  render();
+}
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function render() {
+  const unitF = document.getElementById('unitFilter').value;
+  const stuF = document.getElementById('studentFilter').value;
+
+  let rows = merged;
+  if (currentFilter !== 'all') rows = rows.filter(r => r.status === currentFilter);
+  if (unitF) rows = rows.filter(r => (r.a || r.b).unit === unitF);
+  if (stuF) rows = rows.filter(r => (r.a || r.b).student === stuF);
+
+  const tbody = document.getElementById('tableBody');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">해당 조건의 데이터가 없습니다</div></div></td></tr>`;
+    return;
+  }
+
+  let html = '';
+  let lastUnit = null;
+
+  rows.forEach(row => {
+    const rec = row.a || row.b;
+    const isNewUnit = rec.unit !== lastUnit;
+    if (isNewUnit) {
+      lastUnit = rec.unit;
+      if (html) html += `<tr class="divider-row"><td colspan="10">${esc(rec.unit)}</td></tr>`;
+      else html += `<tr class="divider-row"><td colspan="10">${esc(rec.unit)}</td></tr>`;
+    }
+
+    const rowCls = row.status === 'diff' ? 'row-diff' : row.status === 'only-a' ? 'row-only-a' : row.status === 'only-b' ? 'row-only-b' : '';
+
+    const badge = row.status === 'match'
+      ? '<span class="badge badge-match">일치</span>'
+      : row.status === 'diff'
+      ? `<span class="badge badge-diff">차이 ${row.diffs.length}곳</span>`
+      : row.status === 'only-a'
+      ? '<span class="badge badge-only-a">A만</span>'
+      : '<span class="badge badge-only-b">B만</span>';
+
+    const student = esc(rec.student);
+
+    const renderCell = (col) => {
+      if (row.status === 'only-a') {
+        return `<td class="col-data" style="text-align:center;color:var(--warn)">${esc(row.a[col])}</td>`;
+      }
+      if (row.status === 'only-b') {
+        return `<td class="col-data" style="text-align:center;color:var(--accent)">${esc(row.b[col])}</td>`;
+      }
+      const isDiff = row.diffs.includes(col);
+      if (isDiff) {
+        return `<td class="col-data cell-changed" style="text-align:center;">
+          <div class="cell-pair">
+            <span class="cell-a">A: ${esc(row.a[col] || '—')}</span>
+            <span class="cell-b">B: ${esc(row.b[col] || '—')}</span>
+          </div>
+        </td>`;
+      }
+      return `<td class="col-data" style="text-align:center">${esc(row.a[col])}</td>`;
+    };
+
+    const renderGameCell = (col) => {
+      if (row.status === 'only-a') return `<td class="col-game" style="color:var(--warn)">${esc(row.a[col])}</td>`;
+      if (row.status === 'only-b') return `<td class="col-game" style="color:var(--accent)">${esc(row.b[col])}</td>`;
+      const isDiff = row.diffs.includes(col);
+      if (isDiff) {
+        return `<td class="col-game cell-changed">
+          <div class="cell-pair">
+            <span class="cell-a">A: ${esc(row.a[col] || '—')}</span>
+            <span class="cell-b">B: ${esc(row.b[col] || '—')}</span>
+          </div>
+        </td>`;
+      }
+      return `<td class="col-game">${esc(row.a[col])}</td>`;
+    };
+
+    const renderCompleteCell = (col) => {
+      const getVal = (side) => {
+        const v = row[side] ? row[side][col] : '';
+        const badge = v === '완료' ? 'badge-ok' : 'badge-incomplete';
+        return v ? `<span class="badge ${badge}">${esc(v)}</span>` : '—';
+      };
+      if (row.status === 'only-a') return `<td style="text-align:center">${getVal('a')}</td>`;
+      if (row.status === 'only-b') return `<td style="text-align:center">${getVal('b')}</td>`;
+      const isDiff = row.diffs.includes(col);
+      if (isDiff) {
+        return `<td class="cell-changed" style="text-align:center;">
+          <div class="cell-pair">
+            <span class="cell-a">A: ${row.a[col] || '—'}</span>
+            <span class="cell-b">B: ${row.b[col] || '—'}</span>
+          </div>
+        </td>`;
+      }
+      return `<td style="text-align:center">${getVal('a')}</td>`;
+    };
+
+    html += `<tr class="${rowCls}">
+      <td class="col-status">${badge}</td>
+      <td class="col-unit" title="${esc(rec.unit)}">${esc(rec.unit.replace(/^.*- /, ''))}</td>
+      <td class="col-student">${student}</td>
+      ${renderCell('암기')}
+      ${renderCell('리콜')}
+      ${renderCell('스펠')}
+      ${renderCell('스피킹')}
+      ${renderGameCell('게임')}
+      ${renderCell('테스트')}
+      ${renderCompleteCell('완료여부')}
+    </tr>`;
+  });
+
+  tbody.innerHTML = html;
+}
+
+function exportResult() {
+  const rows = [
+    ['상태', '세트 제목', '학생명', '암기_A', '암기_B', '리콜_A', '리콜_B', '스펠_A', '스펠_B', '스피킹_A', '스피킹_B', '게임_A', '게임_B', '테스트_A', '테스트_B', '완료여부_A', '완료여부_B', '차이 항목']
+  ];
+
+  merged.forEach(row => {
+    const a = row.a || {};
+    const b = row.b || {};
+    const rec = row.a || row.b;
+    const statusLabel = row.status === 'match' ? '일치' : row.status === 'diff' ? '차이있음' : row.status === 'only-a' ? 'A만존재' : 'B만존재';
+    rows.push([
+      statusLabel,
+      rec.unit, rec.student,
+      a['암기']??'', b['암기']??'',
+      a['리콜']??'', b['리콜']??'',
+      a['스펠']??'', b['스펠']??'',
+      a['스피킹']??'', b['스피킹']??'',
+      a['게임']??'', b['게임']??'',
+      a['테스트']??'', b['테스트']??'',
+      a['완료여부']??'', b['완료여부']??'',
+      row.diffs.join(', ')
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [
+    {wch:8},{wch:32},{wch:12},
+    {wch:7},{wch:7},{wch:7},{wch:7},{wch:7},{wch:7},{wch:9},{wch:9},
+    {wch:14},{wch:14},{wch:8},{wch:8},{wch:9},{wch:9},{wch:16}
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '비교결과');
+  const date = new Date().toISOString().slice(0,10).replace(/-/g,'');
+  XLSX.writeFile(wb, `classcard_diff_${date}.xlsx`);
+}
+
+['zoneA','zoneB'].forEach(id => {
+  const zone = document.getElementById(id);
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    const which = id === 'zoneA' ? 'A' : 'B';
+    reader.onload = ev => {
+      const arr = new Uint8Array(ev.target.result);
+      const data = parseXlsx(arr);
+      const wb2 = XLSX.read(arr, { type: 'array' });
+      const sheetUsed = wb2.SheetNames.includes('평가표') ? '평가표' : wb2.SheetNames[0];
+      const sheetWarn = sheetUsed !== '평가표' ? ` ⚠️ 시트: ${sheetUsed}` : '';
+      if (which === 'A') { dataA = data; document.getElementById('nameA').textContent = file.name + sheetWarn; zone.classList.add('loaded'); }
+      else { dataB = data; document.getElementById('nameB').textContent = file.name + sheetWarn; zone.classList.add('loaded'); }
+      if (dataA.length && dataB.length) analyze();
+    };
+    reader.readAsArrayBuffer(file);
+  });
+});
+</script>
+</body>
+</html>

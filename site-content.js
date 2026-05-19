@@ -485,7 +485,7 @@ function injectButton() {
   btnInst.id='htdev-instant-btn';
   btnInst.innerHTML='⚡ 즉시 업데이트';
   btnInst.title='현재 선택된 반+교재를 ClassCard에서 자동으로 찾아 바로 반영합니다';
-  btnInst.style.cssText=`position:fixed;bottom:108px;right:12px;z-index:99998;
+  btnInst.style.cssText=`position:fixed;bottom:28px;right:12px;z-index:99998;
     padding:8px 14px;border-radius:10px;border:none;
     background:linear-gradient(135deg,#059669,#10b981);color:#fff;
     font-size:12px;font-weight:800;cursor:pointer;

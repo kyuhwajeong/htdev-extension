@@ -577,7 +577,51 @@ chrome.runtime.onMessage.addListener(msg => {
         showToast('⚠️ 업데이트 오류: '+(msg.error||'알 수 없는 오류'),'error');
       }
       break;
+
+    // ★ 일괄 업데이트 진행 상황 — 기존 추출 진행바를 그대로 재사용
+    case 'INSTANT_BULK_PROGRESS':
+      if (!document.getElementById('htdev-cc-panel')) showProgress(msg.total);
+      updateProgress(msg.current, msg.total, `${msg.clsName}반 · ${msg.bookName}`);
+      break;
+
+    // ★ 일괄 업데이트 완료 — 성공/실패 건수 요약
+    case 'INSTANT_BULK_DONE': {
+      removePanel();
+      const results = msg.results || [];
+      const okList  = results.filter(r => r.ok);
+      const failList = results.filter(r => !r.ok);
+      if (failList.length === 0) {
+        showToast(`🔄 일괄 업데이트 완료! ${okList.length}개 반 전부 성공`, 'success');
+      } else if (okList.length === 0) {
+        showToast(`⚠️ 일괄 업데이트 실패 — ${failList.length}건 모두 반영 안 됨`, 'error');
+      } else {
+        showToast(`🔄 일괄 업데이트 완료 — 성공 ${okList.length}건 / 실패 ${failList.length}건`, 'error');
+      }
+      if (failList.length) {
+        console.warn('[htdev] 일괄 업데이트 실패 목록:');
+        failList.forEach(r => console.warn(`  · [${r.clsName}] ${r.bookName} — ${r.error || '알 수 없는 오류'}`));
+      }
+      break;
+    }
   }
+});
+
+// ★ 사이트(대시보드)가 보내는 일괄 업데이트 요청 신호 수신
+// (DashboardApp._requestBulkUpdate()가 window.dispatchEvent로 내보내는 것을 여기서 받아
+//  확장 프로그램의 백그라운드로 전달한다 — 페이지의 MAIN world와 콘텐츠 스크립트의
+//  ISOLATED world는 JS 스코프는 분리돼 있어도 DOM 이벤트는 공유되므로 이 방식이 동작한다)
+window.addEventListener('htdev:bulkSyncRequest', (e) => {
+  const targets = e.detail?.targets || [];
+  if (!targets.length) { showToast('⚠️ 업데이트할 교재가 없습니다', 'error'); return; }
+  console.log('[htdev] 일괄 업데이트 요청 수신:', targets.length, '건');
+  showProgress(targets.length);
+  updateProgress(0, targets.length, '준비 중...');
+  chrome.runtime.sendMessage({ action:'INSTANT_UPDATE_BULK', targets }, res => {
+    if (chrome.runtime.lastError || !res?.ok) {
+      removePanel();
+      showToast('⚠️ ' + (res?.error || chrome.runtime.lastError?.message || '일괄 업데이트 시작 실패'), 'error');
+    }
+  });
 });
 
 // ── 초기화 ──

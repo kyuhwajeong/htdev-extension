@@ -11,7 +11,7 @@ async function saveS(s) {
 }
 async function loadS() {
   const r = await chrome.storage.session.get('htdev_S');
-  return r.htdev_S || { phase:'IDLE', selected:[], idx:0, results:[], ccTabId:null, siteTabId:null };
+  return r.htdev_S || { phase:'IDLE', selected:[], idx:0, results:[], ccTabId:null, siteTabId:null, bulkTargets:[], bulkIdx:0, bulkResults:[] };
 }
 
 // ── ★ 즉시 업데이트: 자동 매칭 유틸 ──
@@ -120,7 +120,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           });
         }
 
+        // ★ INSTANT_BULK_FIND: 일괄 업데이트 중, 현재 대상의 자동 매칭
+        if (pageType==='main' && S.phase==='INSTANT_BULK_FIND') {
+          chrome.tabs.sendMessage(S.ccTabId, { action:'GET_CLASS_LIST' }, async res => {
+            if (chrome.runtime.lastError || !res?.classList?.length) {
+              console.warn('[htdev bg] INSTANT_BULK_FIND: 클래스 목록 없음, 재시도');
+              setTimeout(async()=>{
+                const S2=await loadS();
+                if(S2.phase!=='INSTANT_BULK_FIND'||!S2.ccTabId) return;
+                chrome.tabs.sendMessage(S2.ccTabId,{action:'GET_CLASS_LIST'},async res2=>{
+                  if(!res2?.classList?.length){ await _skipBulkTarget(S2, 'ClassCard 클래스 목록을 가져올 수 없습니다'); return; }
+                  await _doBulkFind(S2, res2.classList);
+                });
+              },3000);
+              return;
+            }
+            await _doBulkFind(S, res.classList);
+          });
+        }
+
         if (pageType==='set' && (S.phase==='EXTRACTING'||S.phase==='INSTANT')) {
+          setTimeout(() => {
+            chrome.tabs.sendMessage(S.ccTabId, { action:'EXTRACT_NOW' }, res => {
+              if (chrome.runtime.lastError) {
+                setTimeout(()=>{
+                  chrome.tabs.sendMessage(S.ccTabId, { action:'EXTRACT_NOW' }).catch(()=>{});
+                }, 1500);
+              }
+            });
+          }, 500);
+        }
+
+        // ★ INSTANT_BULK_EXTRACT: 일괄 업데이트 중, 현재 대상의 데이터 추출
+        if (pageType==='set' && S.phase==='INSTANT_BULK_EXTRACT') {
           setTimeout(() => {
             chrome.tabs.sendMessage(S.ccTabId, { action:'EXTRACT_NOW' }, res => {
               if (chrome.runtime.lastError) {
@@ -149,6 +181,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       // ── 추출 완료 ──
       case 'CC_DATA_EXTRACTED': {
+        // ★ 일괄 업데이트 중이면 별도 경로로 처리 (기존 EXTRACTING/INSTANT 흐름은 그대로 둠)
+        if (S.phase === 'INSTANT_BULK_EXTRACT') {
+          await _finishBulkTargetExtraction(S, msg);
+          sendResponse({ ok:true });
+          break;
+        }
         // ★ EXTRACTING(일반) 또는 INSTANT(즉시 업데이트) 두 페이즈 모두 처리
         if (S.phase !== 'EXTRACTING' && S.phase !== 'INSTANT') { sendResponse({ok:false}); break; }
         S.results.push({ ccName:msg.ccName, classId:msg.classId, data:msg.data });
@@ -334,6 +372,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
       }
 
+      // ── ★ 일괄 즉시 업데이트: 여러 {반,교재}를 순차적으로 자동 매칭→추출→반영 ──
+      case 'INSTANT_UPDATE_BULK': {
+        if (S.phase !== 'IDLE') { sendResponse({ ok:false, error:'다른 작업이 진행 중입니다' }); break; }
+        const targets = Array.isArray(msg.targets) ? msg.targets : [];
+        if (!targets.length) { sendResponse({ ok:false, error:'업데이트할 대상이 없습니다' }); break; }
+        S.siteTabId   = sender.tab.id;
+        S.bulkTargets = targets;
+        S.bulkIdx     = 0;
+        S.bulkResults = [];
+        S.ccTabId     = null;
+        await saveS(S);
+        await _startBulkTarget(S);
+        sendResponse({ ok:true, total: targets.length });
+        break;
+      }
+
       // ── xlsx 생성 (페이지의 window.XLSX 활용) ──
       case 'GENERATE_XLSX': {
         chrome.scripting.executeScript({
@@ -384,7 +438,142 @@ chrome.tabs.onRemoved.addListener(async tabId => {
       }).catch(()=>{});
     }
   }
+  // ★ 일괄 업데이트 중 탭이 닫히면 진행 중이던 대상은 실패로 기록하고 전체를 마무리
+  if(tabId===S.ccTabId && (S.phase==='INSTANT_BULK_FIND'||S.phase==='INSTANT_BULK_EXTRACT')){
+    const target = S.bulkTargets?.[S.bulkIdx];
+    if (target) S.bulkResults.push({ clsName:target.clsName, bookName:target.bookName, ok:false, error:'ClassCard 탭이 닫혔습니다' });
+    S.ccTabId = null;
+    await saveS(S);
+    await _finishBulk(S);
+  }
 });
+
+// ── ★ 일괄 업데이트: 다음 대상 처리 시작 ──
+async function _startBulkTarget(S){
+  const target = S.bulkTargets[S.bulkIdx];
+  if (!target) { await _finishBulk(S); return; }
+
+  if (S.siteTabId) {
+    chrome.tabs.sendMessage(S.siteTabId, {
+      action:'INSTANT_BULK_PROGRESS',
+      current: S.bulkIdx + 1, total: S.bulkTargets.length,
+      clsName: target.clsName, bookName: target.bookName
+    }).catch(()=>{});
+  }
+
+  const mapKey = `cc_map_${target.clsId||'_'}_${target.bookId}`;
+  const stored = await chrome.storage.local.get(mapKey);
+  const cached = stored[mapKey];
+
+  if (cached?.ccClassId) {
+    // ✅ 캐시 있음 → ClassReports 바로 이동 (Main 페이지 매칭 단계 건너뜀)
+    S.phase = 'INSTANT_BULK_EXTRACT';
+    await saveS(S);
+    if (S.ccTabId) {
+      chrome.tabs.update(S.ccTabId, { url:`https://www.classcard.net/ClassReports/set/${cached.ccClassId}`, active:true });
+    } else {
+      chrome.tabs.create({ url:`https://www.classcard.net/ClassReports/set/${cached.ccClassId}`, active:true },
+        async tab => { S.ccTabId = tab.id; await saveS(S); });
+    }
+  } else {
+    // 🔍 캐시 없음 → ClassCard Main에서 자동 매칭
+    S.phase = 'INSTANT_BULK_FIND';
+    await saveS(S);
+    if (S.ccTabId) {
+      chrome.tabs.update(S.ccTabId, { url:'https://www.classcard.net/Main/', active:true });
+    } else {
+      chrome.tabs.create({ url:'https://www.classcard.net/Main/', active:true },
+        async tab => { S.ccTabId = tab.id; await saveS(S); });
+    }
+  }
+}
+
+// ── ★ 일괄 업데이트: 현재 대상 자동 매칭(Main 페이지에서) ──
+async function _doBulkFind(S, classList){
+  const target = S.bulkTargets[S.bulkIdx];
+  let siteData=null;
+  try{
+    const r=await chrome.scripting.executeScript({
+      target:{tabId:S.siteTabId}, world:'MAIN',
+      func:()=>{
+        try{
+          const books=typeof BookLibDB!=='undefined'?(BookLibDB.getAllBooks?.()??BookLibDB.getBooks?.()??[]):[];
+          const classes=typeof DB!=='undefined'&&DB.getActiveClasses?DB.getActiveClasses():[];
+          return{ok:true,books:JSON.parse(JSON.stringify(books)),classes:JSON.parse(JSON.stringify(classes))};
+        }catch(e){return{ok:false,error:e.message};}
+      }
+    });
+    siteData=r?.[0]?.result;
+  }catch(e){ siteData=null; }
+
+  if(!siteData?.ok){ await _skipBulkTarget(S, '사이트 데이터 로드 실패'); return; }
+
+  const ccClassId=_autoMatchCC(classList, siteData, target.clsId, target.bookId);
+  if(!ccClassId){ await _skipBulkTarget(S, `[${target.clsName}] ${target.bookName}: ClassCard에서 일치하는 클래스를 찾지 못했습니다`); return; }
+
+  const matched=classList.find(c=>c.classId===ccClassId);
+  console.log('[htdev] BULK 매칭:', target.clsName, target.bookName, '→', matched?.name, ccClassId);
+  S.phase='INSTANT_BULK_EXTRACT';
+  await saveS(S);
+  chrome.tabs.update(S.ccTabId,{
+    url:`https://www.classcard.net/ClassReports/set/${ccClassId}`,
+    active:true
+  });
+}
+
+// ── ★ 일괄 업데이트: 현재 대상 추출 완료 → 반영 → 다음 대상으로 ──
+async function _finishBulkTargetExtraction(S, msg){
+  const target = S.bulkTargets[S.bulkIdx];
+  if (!target) { await _finishBulk(S); return; }
+
+  // 매핑 캐시 저장 (다음번 이 반+교재 업데이트 시 Main 페이지 매칭 단계 건너뜀)
+  const mapKey = `cc_map_${target.clsId||'_'}_${target.bookId}`;
+  await chrome.storage.local.set({ [mapKey]: { ccClassId: msg.classId, ccName: msg.ccName } });
+
+  // 사이트에 반영
+  let applyRes = { ok:false, error:'반영 실패' };
+  try {
+    const r = await chrome.scripting.executeScript({
+      target:{ tabId:S.siteTabId }, world:'MAIN',
+      func: async (clsId, bkId, data) => {
+        if (typeof BooklibApp === 'undefined' || !BooklibApp._applyClassCardData) return { ok:false, error:'BooklibApp 없음' };
+        return await BooklibApp._applyClassCardData(clsId, bkId, data);
+      },
+      args: [target.clsId || null, target.bookId, msg.data]
+    });
+    applyRes = r?.[0]?.result || applyRes;
+  } catch(e) { applyRes = { ok:false, error:e.message }; }
+
+  S.bulkResults.push({ clsName: target.clsName, bookName: target.bookName, ccName: msg.ccName, ...applyRes });
+  S.bulkIdx++;
+  await saveS(S);
+  await _startBulkTarget(S); // 다음 대상으로 진행 (없으면 내부에서 _finishBulk 호출)
+}
+
+// ── ★ 일괄 업데이트: 전체 완료 처리 ──
+async function _finishBulk(S){
+  if (S.ccTabId) { chrome.tabs.remove(S.ccTabId).catch(()=>{}); }
+  const results = S.bulkResults || [];
+  if (S.siteTabId) {
+    // ★ 반영 후 화면 갱신 — 마지막으로 반영된 반/교재 기준으로 한 번만 트리거
+    const lastOk = [...results].reverse().find(r => r.ok);
+    if (lastOk) {
+      chrome.scripting.executeScript({
+        target:{ tabId:S.siteTabId }, world:'MAIN',
+        func: () => {
+          if (typeof BooklibApp !== 'undefined' && BooklibApp._onBkChange) {
+            const bsel = document.getElementById('bl-bsel');
+            if (bsel?.value) BooklibApp._onBkChange(bsel.value);
+          }
+        }
+      }).catch(()=>{});
+    }
+    chrome.tabs.sendMessage(S.siteTabId, { action:'INSTANT_BULK_DONE', results }).catch(()=>{});
+    chrome.tabs.update(S.siteTabId, { active:true });
+  }
+  S.phase='IDLE'; S.ccTabId=null; S.bulkTargets=[]; S.bulkIdx=0; S.bulkResults=[];
+  await saveS(S);
+}
 
 // ── ★ INSTANT_FIND 자동 매칭 실행 ──
 async function _doInstantFind(S, classList){
